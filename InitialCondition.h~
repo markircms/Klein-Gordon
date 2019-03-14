@@ -1,0 +1,33 @@
+#include <string>
+#include <stdlib.h>
+#include <iostream> 
+#include <cstdio>
+#include <cstdlib>
+#include <vector> 
+#include "TROOT.h"
+#include "TFile.h"
+#include "TDirectory.h"
+#include "Math/IFunction.h"
+
+class InitialCondition:public ROOT::Math::IBaseFunctionOneDim{
+public:
+  double DoEval(double x) const {
+
+    if (a) {return ff(x);} else {return 0;}  
+
+  };
+  
+  ROOT::Math::IBaseFunctionOneDim* Clone() const{
+    return new InitialCondition();
+  };
+  InitialCondition(){
+    a = false;
+  };
+  InitialCondition(TF1 f){
+    ff = f;
+    a = true;
+  };
+private:
+  bool a = false;
+  TF1 ff = TF1("ff", "0",0,100);
+};

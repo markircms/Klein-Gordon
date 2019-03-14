@@ -1,0 +1,425 @@
+#include <string>
+#include <stdlib.h>
+#include <iostream> 
+#include <cstdio>
+#include <cstdlib>
+#include <vector> 
+#include "TROOT.h"
+#include "TCanvas.h"
+#include "TH1F.h"
+#include "TH2F.h"
+#include "TFile.h"
+#include "TTree.h"
+#include "TF1.h"
+#include "TDirectory.h"
+#include "TMath.h"
+#include <algorithm>
+#include <math.h>
+#include "Math/IFunction.h"
+
+TFile *fileoutput;
+TGraph *gr;
+
+
+const double lvc = 1.;
+const int GridS = 100;
+
+const int numberofoutput = 5;
+const double timest = 0.1;
+const double Spstep = 0.1;
+bool exactsolution = true;
+
+double lim = GridS*Spstep; 
+
+TF1 init1 = TF1("f1", "cos(1.0*(x-5))*exp(-(x-5)*(x-5)/2.)",0,lim+0.01);
+TF1 init2 = TF1("f1", "-1.*sin(1.0*(x-5))*exp(-(x-5)*(x-5)/2.) - (x-5)* cos(1.0*(x-5))*exp(-(x-5)*(x-5)/2.)",0,lim+0.01); 
+//TF2 exactsol =  TF2("f2","0",0,lim+0.01,0,lim+0.01); // dummy
+
+TF2 exactsol = TF2 ("f2","cos(1.0*(x-5+y))*exp(-(x-5+y)*(x-5+y)/2.)",0,lim+0.01,0,lim+0.01);
+
+struct Sol{
+  vector<double> Solvector;
+  double time;
+};
+
+// template for initial conditions
+
+class InitialCondition:public ROOT::Math::IBaseFunctionOneDim{
+public:
+  double DoEval(double x) const {
+
+    if (a) {return ff(x);} else {return 0;}  
+
+  };
+  
+  ROOT::Math::IBaseFunctionOneDim* Clone() const{
+    return new InitialCondition();
+  };
+  InitialCondition(){
+    a = false;
+  };
+  InitialCondition(TF1 f){
+    ff = f;
+    a = true;
+  };
+private:
+  bool a = false;
+  TF1 ff = TF1("ff", "0",0,100);
+};
+
+// template for functions
+
+
+class ExactSolution:public ROOT::Math::IBaseFunctionMultiDim{
+public:
+  double DoEval(const double *x) const{
+    if (a) {return ff(x[0],x[1]);} else return 0;
+  };
+  
+  unsigned int NDim() const
+   {
+      return 2;
+   };
+  ROOT::Math::IBaseFunctionMultiDim* Clone() const{
+    return new ExactSolution();
+  };
+  
+  ExactSolution(){
+    a=false;
+  };
+  ExactSolution(TF2 f){
+    a = true;
+    ff = f;
+  };  
+private:
+  TF2 ff = TF2("ff", "0",0,100);
+  bool a = false;
+};
+
+/* Classes for mathematical functions and methods, i. e. functions for initial conditions, boundary conditions, probably some known exact solutions, form of nonliear potentialetc*/
+
+// class for the functions that set the from of the potential, i. e. phi3 or sin-gordon etc
+class Potential{
+public:
+  Potential(string s, double a, double g);
+  double GetValue();
+private:
+  double A;
+};
+  
+class HyperbolicEquation{
+public:
+  double c;
+  double CourantFactor();
+  double Timestep;
+  double Spatialstep;
+  int Gridsize;
+  vector<Sol> Adjective(string method, InitialCondition initial1);
+  vector<Sol> Wave(string method, string pot, double g, string boundary, InitialCondition initial1, InitialCondition initial2, double time);
+private:
+  vector<Sol> LaxWave3(string pot, double g, string boundary,InitialCondition initial1, InitialCondition initial2, double time);
+  vector<Sol> LaxWavePeriodic3(string pot, double g, InitialCondition initial1, InitialCondition initial2, double time);
+  vector<Sol> LaxWendloffWave3(string pot, double g, string boundary, InitialCondition initial1, InitialCondition initial2, double time);
+  vector<Sol> LaxWendloffWavePeriodic3(string pot, double g, InitialCondition initial1, InitialCondition initial2, double time);
+  vector<Sol> LeapfrogWave3(string pot, double g, string boundary, TF1 initial1, InitialCondition initial2, double time);
+  vector<Sol> LeapfrogWavePeriodic3(string pot, double g, InitialCondition initial1, InitialCondition initial2, double time);
+  vector<double> transform(InitialCondition f);
+  vector<double> VectOfDer(InitialCondition f);
+};
+
+
+
+Potential::Potential(string s, double a, double g) {
+
+  if(s == "0")
+    {
+      A=0;
+    }  
+  else if (s == "phi3")
+    {
+      A =g*a*a*a;
+    }  
+  // default
+  else
+    {
+      cout << "Wrong potential specification";
+      A=0;
+    };
+};
+double Potential::GetValue(){
+  return A;
+};
+
+
+
+vector<Sol> HyperbolicEquation::Wave(string method, string pot, double g, string boundary, InitialCondition initial1, InitialCondition initial2, double time){
+  if (method == "Lax3")
+    {
+     return LaxWave3(pot, g, boundary, initial1, initial2, time);
+    }
+  else if (method == "LW3")
+    {
+      return LaxWendloffWave3(pot, g, boundary, initial1, initial2, time);
+    }
+  else if (method == "Leapfrog3")
+    {
+      //      return LeapfrogWave3(pot, g, boundary, initial1, initial2, time);
+      return {};
+    }
+  // default gives empty vetor
+  else
+    {
+      cout << "Wrong method";
+      return {};
+    };  
+};
+vector<double> HyperbolicEquation::transform(InitialCondition f){
+  vector<double> temp= {};
+  for (int i=0;i<Gridsize;i++){
+    temp.push_back(f.DoEval(i*Spatialstep));
+  };
+  return temp;
+}
+vector<double> HyperbolicEquation::VectOfDer(InitialCondition f){
+  vector<double> temp = {};
+  double a;
+  for (int i = 0; i<Gridsize;i++){
+    if (i == 0) a=(f.DoEval(0.01*Spatialstep)-f.DoEval(0))/(0.01*Spatialstep); 
+    a = (f.DoEval(i*Spatialstep + 0.01*Spatialstep) - f.DoEval(i*Spatialstep - 0.01*Spatialstep))/(0.02*Spatialstep);
+    if (i == Spatialstep) a=(f.DoEval(i*Spatialstep)-f.DoEval(i*Spatialstep - 0.01*Spatialstep))/(0.01*Spatialstep);  
+    temp.push_back(a);
+  };
+  return temp;
+};
+
+vector<Sol> HyperbolicEquation::LaxWave3(string pot, double g, string boundary, InitialCondition initial1, InitialCondition initial2, double time){
+  if (boundary == "periodic")
+    {
+      return LaxWavePeriodic3(pot, g, initial1, initial2, time);
+    }
+  // default -- periodic  
+  else
+    {
+      return LaxWavePeriodic3(pot, g, initial1, initial2, time);
+    };  
+};
+
+vector<Sol> HyperbolicEquation::LaxWendloffWave3(string pot, double g, string boundary, InitialCondition initial1, InitialCondition initial2, double time){
+  if (boundary == "periodic")
+    {
+      return LaxWendloffWavePeriodic3(pot, g, initial1, initial2, time);
+    }
+  // default -- periodic  
+  else
+    {
+      return LaxWendloffWavePeriodic3(pot, g, initial1, initial2, time);
+    };  
+};
+
+
+
+// three-variable system
+vector<Sol> HyperbolicEquation::LaxWavePeriodic3(string pot, double g, InitialCondition initial1, InitialCondition initial2, double time){
+  vector<double> winit = VectOfDer(initial1);
+  vector<double> uinit = transform(initial1);
+  vector<double> vinit = transform(initial2);
+  vector<Sol> uOuttemp = {};
+  Sol ustemp;
+  int it = int(time/Timestep + 0.5);
+  double ut, wt, vt;
+  vector<double> u, w, v;
+  vector<double> utemp, vtemp, wtemp;
+  for (int i=0;i<it;i++){
+   utemp = {};
+   vtemp = {};
+   wtemp = {};
+    if (i==0){
+      u = uinit;
+      v = vinit;
+      w = winit;
+    }
+    // periodic boundary conditions    
+    else {
+      for (int j=0;j<Gridsize;j++){
+       	Potential Potent(pot,g,v.at(j));
+	if (j>0){
+	  ut = 0.5 * (u.at((j+1)%Gridsize) + u.at((j-1)%Gridsize)) + Timestep * v.at((j)%Gridsize);
+	  vt = 0.5 *  (v.at((j+1)%Gridsize) + v.at((j-1)%Gridsize)) + (c*c*Timestep/(2*Spatialstep)) * (w.at((j+1)%Gridsize) - w.at((j-1)%Gridsize)) - Potent.GetValue();
+	  wt = 0.5 * (w.at((j+1)%Gridsize) + w.at((j-1)%Gridsize)) + (Timestep/(2* Spatialstep)) * (v.at((j+1)%Gridsize) - v.at((j-1)%Gridsize));
+	}
+	else {
+	  ut = 0.5 * (u.at((j+1)%Gridsize) + u.at((j-1)%Gridsize + Gridsize)) + Timestep * v.at((j)%Gridsize);
+	  vt = 0.5 * (v.at((j+1)%Gridsize) + v.at((j-1)%Gridsize + Gridsize)) + (c*c*Timestep/(2* Spatialstep)) * (w.at((j+1)%Gridsize) - w.at((j-1)%Gridsize + Gridsize)) + Potent.GetValue();
+	  wt = 0.5 * (w.at((j+1)%Gridsize) + w.at((j-1)%Gridsize + Gridsize)) + (Timestep/(2*Spatialstep)) * (v.at((j+1)%Gridsize) - v.at((j-1)%Gridsize + Gridsize));
+	}	  
+	utemp.push_back(ut);
+	vtemp.push_back(vt);
+	wtemp.push_back(wt);
+      };
+      u = utemp;
+      v = vtemp;
+      w = wtemp;
+    };
+    ustemp.Solvector = u;
+    ustemp.time = i*Timestep;
+    uOuttemp.push_back(ustemp);
+
+  };
+  cout << u.size() << "  " << u.at(7);
+  return uOuttemp; //u;
+};
+
+
+vector<Sol> HyperbolicEquation::LaxWendloffWavePeriodic3(string pot, double g, InitialCondition initial1, InitialCondition initial2, double time){
+  vector<double> winit = VectOfDer(initial1);
+  vector<double> uinit = transform(initial1);
+  vector<double> vinit = transform(initial2);
+  vector<Sol> uOuttemp = {};
+  Sol ustemp;
+  int it = int(time/Timestep + 0.5);
+  double ut, wt, vt;
+  vector<double> u, w, v;
+  vector<double> utemp, vtemp, wtemp;
+  for (int i=0;i<it;i++){
+   utemp = {};
+   vtemp = {};
+   wtemp = {};
+    if (i==0){
+      u = uinit;
+      v = vinit;
+      w = winit;
+    }
+    // periodic boundary conditions    
+    else {
+      for (int j=0;j<Gridsize;j++){
+       	Potential Potent(pot,g,v.at(j));
+	if (j>0){
+	  ut = u.at((j)%Gridsize) + Timestep * v.at((j)%Gridsize)+ ((Timestep*Timestep*c*c)/(2*Spatialstep*Spatialstep))*(u.at((j+1)%Gridsize) + u.at((j-1)%Gridsize) - 2 * u.at((j)%Gridsize));
+	  vt = v.at((j)%Gridsize) + (c*c*Timestep/(2*Spatialstep)) * (w.at((j+1)%Gridsize) - w.at((j-1)%Gridsize)) - Potent.GetValue() + ((Timestep*Timestep*c*c)/(2*Spatialstep*Spatialstep))*(v.at((j+1)%Gridsize) + v.at((j-1)%Gridsize) - 2 * v.at((j)%Gridsize));
+	  wt = w.at((j)%Gridsize) + (Timestep/(2* Spatialstep)) * (v.at((j+1)%Gridsize) - v.at((j-1)%Gridsize)) + ((Timestep*Timestep*c*c)/(2*Spatialstep*Spatialstep))*(w.at((j+1)%Gridsize) + w.at((j-1)%Gridsize) - 2 * w.at((j)%Gridsize));
+	}
+	else {
+	  ut = u.at((j)%Gridsize) + Timestep * v.at((j)%Gridsize) + ((Timestep*Timestep*c*c)/(2*Spatialstep*Spatialstep))*(u.at((j+1)%Gridsize) + u.at((j-1)%Gridsize + Gridsize) - 2 * u.at((j)%Gridsize));;
+	  vt = v.at((j)%Gridsize) + (c*c*Timestep/(2* Spatialstep)) * (w.at((j+1)%Gridsize) - w.at((j-1)%Gridsize + Gridsize)) + Potent.GetValue() + ((Timestep*Timestep*c*c)/(2*Spatialstep*Spatialstep))*(v.at((j+1)%Gridsize) + v.at((j-1)%Gridsize + Gridsize) - 2 * v.at((j)%Gridsize));;
+	  wt = w.at((j)%Gridsize) + (Timestep/(2*Spatialstep)) * (v.at((j+1)%Gridsize) - v.at((j-1)%Gridsize + Gridsize)) + ((Timestep*Timestep*c*c)/(2*Spatialstep*Spatialstep))*(w.at((j+1)%Gridsize) + w.at((j-1)%Gridsize + Gridsize) - 2 * w.at((j)%Gridsize));
+	};	  
+	utemp.push_back(ut);
+	vtemp.push_back(vt);
+	wtemp.push_back(wt);
+      };
+      u = utemp;
+      v = vtemp;
+      w = wtemp;
+    };
+    ustemp.Solvector = u;
+    ustemp.time = i*Timestep;
+    uOuttemp.push_back(ustemp);
+
+  };
+  cout << u.size() << "  " << u.at(7);
+  return uOuttemp; //u;
+};
+
+double HyperbolicEquation::CourantFactor(){
+  return c * Timestep/Spatialstep;
+};
+
+
+
+void beginJob(){
+  char name[50];
+  sprintf(name,"Klein-Gordon.root");
+  fileoutput = TFile::Open(name,"RECREATE");
+};
+
+void MakeGraph(int N,vector<Sol> vect, double spstep, int timeouti){
+  TGraph *gr = new TGraph();
+  char name[50];
+  sprintf(name,"Solution, f(x), t = %f", vect.at(timeouti).time);
+  gr -> SetName(name);
+  sprintf(name,"time = %f", vect.at(timeouti).time);
+  gr->SetTitle(name);
+  if (vect.at(timeouti).Solvector.size() == N){
+    for (int i = 0; i<N;i++){
+      gr->SetPoint(i,i*spstep,vect.at(timeouti).Solvector.at(i));
+    };
+  };
+  if (gr) {
+    gr -> Draw("AC");
+    gr -> Write();
+   };
+};
+
+
+
+void MakeGraph(int N,vector<Sol> vect, double spstep, int timeouti, ExactSolution f){
+  TGraph *gr = new TGraph();
+  TGraph *gr2 = new TGraph();
+  TMultiGraph *mg = new TMultiGraph();
+  char name[50];
+  double temp[2];
+  sprintf(name,"Solution, f(x), t = %f", vect.at(timeouti).time);
+  mg -> SetName(name);
+  sprintf(name,"time = %f", vect.at(timeouti).time);
+  mg->SetTitle(name);
+  if (vect.at(timeouti).Solvector.size() == N){
+    for (int i = 0; i<N;i++){
+      temp[0] = i*spstep;
+      temp[1] = vect.at(timeouti).time;
+      gr->SetPoint(i,i*spstep,vect.at(timeouti).Solvector.at(i));
+      gr2->SetPoint(i,i*spstep,f.DoEval(temp));
+    };
+  };
+  gr->SetMarkerColor(kBlue);
+  gr->SetMarkerSize(0.5);
+  gr->SetMarkerStyle(7);
+
+  gr2->SetMarkerColor(kRed);
+  gr2->SetMarkerSize(0.5);
+  gr2->SetMarkerStyle(8);  
+  
+  if ((gr) && (gr2)) {
+    mg->Add(gr);
+    mg->Add(gr2);
+    mg -> Draw("AC");
+    mg -> Write();
+   };
+};
+
+void endJob(){
+  fileoutput->Close();
+};
+
+
+
+void MainKG(string method, string pot, double g, string boundary, double time){  
+  InitialCondition initial1 = InitialCondition(init1);
+  InitialCondition initial2 = InitialCondition(init2);
+  beginJob();
+  HyperbolicEquation b;
+  ExactSolution solution(exactsol);
+  b.c = lvc;
+  b.Gridsize = GridS;
+  b.Spatialstep = Spstep;
+  b.Timestep = timest;
+  double lim = b.Gridsize*b.Spatialstep;
+  vector<Sol> vect = b.Wave(method, pot, g, boundary, initial1, initial2, time);
+  if (exactsolution == true){
+    for (int i = 0;i<numberofoutput;i++){
+      double outtime = int(time*i/(numberofoutput*timest)+0.5);
+      MakeGraph(b.Gridsize, vect, b.Spatialstep,outtime,solution);
+    }
+   }
+  else {
+    for (int i = 0;i<numberofoutput;i++){
+      double outtime = int(time*i/(numberofoutput*timest)+0.5);
+      MakeGraph(b.Gridsize, vect, b.Spatialstep,outtime);
+  };
+  }  
+  endJob();
+};
+
+
+
+
+
