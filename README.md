@@ -1,17 +1,5 @@
-Do not read me, this is a joke :-)
+To do list:
 
-how to send file to github -- example
-
-  971  git init         \\ one time
- 
-  973  git add README.md
- 
-  975  git commit -m " add README "
-
-  976  git status
-
-  977  git remote add origin git@github.com:radovskaya/2D_static_code.git
-
-  978  git push -u origin master
-
-
+1) Add Runge-Kutta, Crank-Nicolson, Leapfrog.
+2) Make python script (to compile and set global parameters).
+3) Play with sin-Gordon and exact silution. To test methods.
