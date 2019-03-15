@@ -1,5 +1,9 @@
-To do list:
 
-1) Add Runge-Kutta, Crank-Nicolson, Leapfrog.
-2) Make python script (to compile and set global parameters).
-3) Play with sin-Gordon and exact solutions. To test methods.
+
+Todo list:
+- Write note about Sin-Gordon and push !!
+- Make Python script 
+- Add methods Runge-Kutta 4, Crank-Nicolson, Leapfrog !
+
+
+Comments: ! - important, !! - very importantj
