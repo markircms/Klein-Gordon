@@ -6,4 +6,4 @@ Todo list:
 - Add methods Runge-Kutta 4, Crank-Nicolson, Leapfrog !
 
 
-Comments: ! - important, !! - very importantj
+Comments: ! - important, !! - very important
